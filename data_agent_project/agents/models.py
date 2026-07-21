@@ -6,4 +6,4 @@ class CodeResponse(BaseModel):
 
 class CriticVerdict(BaseModel):
     is_correct: bool = Field(description="True if the code logic perfectly and completely answers the user query. False if it misses math, logic, filters, or parameters.")
-    critique: str = Field(description="If is_correct is False, provide specific feedback on what is wrong or missing. Leave empty if True.")
+    critique: str = Field(default="",description="If is_correct is False, provide specific feedback on what is wrong or missing. Leave empty if True.")

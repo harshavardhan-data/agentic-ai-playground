@@ -1,7 +1,10 @@
+from typing import List
 from google import genai
 from google.genai import types
 from agents.models import CodeResponse
 from core.logger import get_logger
+from core.memory import MemoryTurn,SessionState
+from prompts.formatter import PromptFormatter
 
 logger=get_logger(__name__)
 
@@ -11,11 +14,41 @@ class CoderAgent:
         self.client=client
         self.model=model
         
-    def generate_code(self,prompt:str) ->CodeResponse:
-        logger.info("Invoking Coder Agent generation workflow.")
+    def generate_code(self,current_task:str,session:SessionState,retry_context:str="") ->CodeResponse:
+        # Observability: Log context history depth
+        logger.info("Compiling prompt with session conversation history",extra={"extra_data":{"history_depth":len(session.history)}})
+
+        
+        history_section=PromptFormatter.format_history(session)
+        sandbox_section=PromptFormatter.format_sandbox(session)
+
+        current_prompt = f"""You are an expert Python data analysis agent. 
+        Important Execution Rules :
+        - The Python execution environment is persitent across this session
+        - Variables created during previous successful executions are still available to you
+        - Reuse existing variables whenever appropriate.
+        - Do not hardcode numerical outputs
+        - Only recompute values when necessary
+        - Assume a pandas DataFrame named 'df' is already loaded in the environment
+        - Always finish by printing the requested result
+
+        {PromptFormatter.build_section("CURRENT TASK",current_task)}
+        
+        {PromptFormatter.build_section("ATTEMPTS SO FAR THIS TASK (all failed — do not repeat these mistakes)", retry_context)}
+
+        {PromptFormatter.build_section("SESSION HISTORY",history_section)}
+
+        {PromptFormatter.build_section("CURRENT EXECUTION STATE",sandbox_section)}
+       
+
+        """
+
+        
+
+        logger.info("Invoking Coder Agent generation workflow")
         response=self.client.models.generate_content(
             model=self.model,
-            contents=prompt,
+            contents=current_prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=CodeResponse
