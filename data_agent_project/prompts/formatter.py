@@ -1,5 +1,6 @@
 from core.memory import SessionState
 import pandas as pd
+from models.db_context import DatabaseContext
 
 
 class PromptFormatter:
@@ -81,9 +82,14 @@ class PromptFormatter:
     
     @staticmethod
     def format_retry_attempts(attempts:list[dict]) -> str:
+        """
+        'attempts' is a list of dicts like:
+        {"code": "...", "status": "execution_error", "feedback": "..."}
+        This turns that list into readable text the coder can react to.
+        """
         if not attempts:
             return "No previous attempts in this task cycle."
-        
+        text=""
         for idx,attempt in enumerate(attempts,1):
             text+=f"""
             ------- Attempt {idx} Failed ---------
@@ -95,4 +101,17 @@ class PromptFormatter:
             {attempt['feedback']}
             """
         return text
+
+    @staticmethod
+    def format_db_context(context:DatabaseContext) -> str:
+        views_str = "\n".join(f"- {v}" for v in context.views) if context.views else "None"
+        temp_str = "\n".join(f"- {t}" for t in context.temporary_tables) if context.temporary_tables else "None"
+        return f"""SQL Dialect: {context.dialect}
+        Database: {context.database_name}
+        Execution Mode: {context.execution_mode}
+        Available Views:
+        {views_str}
+        Temporary Tables:
+        {temp_str}
+        Maximum Rows Returned: {context.max_rows}"""
         

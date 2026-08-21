@@ -2,23 +2,24 @@ import os
 import pandas as pd
 from google import genai
 from core.logger import get_logger
-from tools.sandbox import CodeSandbox
+from sandboxes.code_sandbox import CodeSandbox
 from agents.coder import CoderAgent
 from agents.critic import CriticAgent
-from dotenv import load_dotenv
 from core.client import gemini_client
-from core.memory import BaseSessionStore,MemoryTurn
+from core.memory import BaseSessionStore,MemoryTurn,SessionState
 from agents.summarizer import SummarizerAgent
 from prompts.formatter import PromptFormatter
+import time
 
 
 
 logger=get_logger(__name__)
 
-def run_self_healing_pipeline(df:pd.DataFrame,csv_schema:str,user_query:str,critic_ground_truth:str,
-                              memory:BaseSessionStore,
-                              session_id:str,
+def run_self_healing_pipeline(user_query:str,
+                              memory:BaseSessionStore,session:SessionState,
                               max_retries:int=4):
+    
+    pipeline_start = time.perf_counter()  # — tracks total time across all retries
     
 
     # Agents now use the shared singleton client!
@@ -26,14 +27,14 @@ def run_self_healing_pipeline(df:pd.DataFrame,csv_schema:str,user_query:str,crit
     critic = CriticAgent(client=gemini_client)
     summarizer = SummarizerAgent(client=gemini_client)
 
-    # Fetch history state for this user session context
-    session=memory.get_session(session_id)
+    session_id=session.session_id
 
-    if "df" not in session.sandbox_state:
-        session.sandbox_state["df"]=df.copy()
+    # if df is not None and "df" not in session.sandbox_state:
+    #     session.sandbox_state["df"]=df.copy()
     
     sandbox_state=session.sandbox_state
 
+    csv_schema=CodeSandbox.build_schema_string(session.sandbox_state["df"])
 
     # Defining Our Current Task
     current_task=f"""
@@ -48,18 +49,22 @@ def run_self_healing_pipeline(df:pd.DataFrame,csv_schema:str,user_query:str,crit
     
 
     for attempt in range(1,max_retries+1):
-        logger.info(f"Initiating pipeline processing loop execution cycle.", extra={"extra_data": {"attempt": attempt}})
+        attempt_start = time.perf_counter() # - per attempt timing
+        logger.info(f"Initiating pipeline processing loop execution cycle.", extra={"extra_data": {"attempt": attempt,"session_id": session_id}})
     
         # Inject context history directly into generation step
         agent_response=coder.generate_code(current_task,session,retry_context=PromptFormatter.format_retry_attempts(attempts))
-        logger.info("Coder rationale", extra={"extra_data": {"info": agent_response.info}}) 
+        logger.info("Coder rationale", extra={"extra_data": {"info": agent_response.info,"session_id": session_id}}) 
         # 2. Execute within isolated Sandbox architecture
        
         success,exec_result=CodeSandbox.execute(agent_response.code,sandbox_state)
 
+        attempt_duration_ms = round((time.perf_counter() - attempt_start) * 1000, 2)  
+
 
         if not success:
-            logger.warning(f"Execution runtime crash or safety breach intercepted.", extra={"extra_data": {"attempt": attempt}})
+            logger.warning(f"Execution runtime crash or safety breach intercepted.", 
+                           extra={"extra_data": {"attempt": attempt,"duration_ms": attempt_duration_ms,"session_id": session_id}})
             
             attempts.append({
                 "code":CodeSandbox.clean_code(agent_response.code),
@@ -72,7 +77,7 @@ def run_self_healing_pipeline(df:pd.DataFrame,csv_schema:str,user_query:str,crit
 
         # 3. Evaluate logic via Context-Isolated Critic Agent
         verdict=critic.evaluate_logic(
-            query=critic_ground_truth,
+            query=user_query,
             schema=csv_schema,
             code=agent_response.code,
             output=exec_result,
@@ -81,24 +86,39 @@ def run_self_healing_pipeline(df:pd.DataFrame,csv_schema:str,user_query:str,crit
 
 
         if verdict.is_correct :
-            logger.info("Pipeline successful. System state approved by internal auditor.")
+            total_duration_ms = round((time.perf_counter() - pipeline_start) * 1000, 2)
+            logger.info("Pipeline successful. System state approved by internal auditor.",extra={
+                        "extra_data":{"attempts_used":attempt,
+                                      "total_duration_ms":total_duration_ms,
+                                      "last_attempt_duration_ms":attempt_duration_ms,"session_id": session_id}})
             # SDE State Persistence: Commit only the successful final execution path to long-term memory
             summary=summarizer.summarize(user_query=user_query,code=agent_response.code,output=exec_result)
             new_turn=MemoryTurn(user_query=user_query,
                                 successful_code=CodeSandbox.clean_code(agent_response.code),
                                 execution_output=exec_result,summary=summary)
-            memory.add_turn(session_id,new_turn)
+            memory.add_turn(session,new_turn)
             logger.info("Pipeline successful. Turn committed to session memory state store.")       
             return exec_result
         else:
-            logger.warning(f"Logic failure rejected by auditor. Context loop updated.", extra={"extra_data": {"critique": verdict.critique}})
+            logger.warning(f"Logic failure rejected by auditor. Context loop updated.", 
+                           extra={"extra_data": {"critique": verdict.critique,"duration_ms":attempt_duration_ms,"session_id": session_id}})
             attempts.append({
             "code": CodeSandbox.clean_code(agent_response.code),
             "status": "Rejected by Critic",
             "feedback": verdict.critique
             })
 
-    logger.error("Pipeline reached maximum configured loop iteration boundary without analytical resolution.")
+    total_duration_ms = round((time.perf_counter() - pipeline_start) * 1000, 2)  # NEW
+    logger.error(
+        "Pipeline reached maximum configured loop iteration boundary without analytical resolution.",
+        extra={"extra_data": { 
+            "attempts_used": max_retries,
+            "total_duration_ms": total_duration_ms,
+            "final_failure_status": attempts[-1]["status"] if attempts else "unknown",
+            "final_failure_feedback": attempts[-1]["feedback"] if attempts else "n/a",
+            "session_id": session_id
+        }}
+    )
     return None
 
 if __name__ == "__main__":

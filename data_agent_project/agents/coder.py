@@ -1,10 +1,11 @@
 from typing import List
 from google import genai
 from google.genai import types
-from agents.models import CodeResponse
+from models.llm_schemas import CodeResponse
 from core.logger import get_logger
 from core.memory import MemoryTurn,SessionState
 from prompts.formatter import PromptFormatter
+from core.telemetry import log_call,log_token_usage
 
 logger=get_logger(__name__)
 
@@ -13,10 +14,11 @@ class CoderAgent:
     def __init__(self,client:genai.Client,model:str="gemini-3.1-flash-lite"):
         self.client=client
         self.model=model
-        
+    
+    @log_call   
     def generate_code(self,current_task:str,session:SessionState,retry_context:str="") ->CodeResponse:
         # Observability: Log context history depth
-        logger.info("Compiling prompt with session conversation history",extra={"extra_data":{"history_depth":len(session.history)}})
+        logger.info("Compiling prompt with session conversation history",extra={"extra_data":{"history_depth":len(session.history),"session_id": session.session_id}})
 
         
         history_section=PromptFormatter.format_history(session)
@@ -54,8 +56,10 @@ class CoderAgent:
                 response_schema=CodeResponse
             )
         )
+        
+        log_token_usage(response=response,agent_name="Coder")
 
         # SDE Observability: Capture metadata without disrupting streaming flow
-        logger.info("Coder generation complete.", extra={"extra_data": {"model": self.model}})
+        logger.info("Coder generation complete.", extra={"extra_data": {"model": self.model,"session_id": session.session_id}})
         return CodeResponse.model_validate_json(response.text)
     

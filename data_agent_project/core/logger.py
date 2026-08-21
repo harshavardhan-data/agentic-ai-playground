@@ -2,6 +2,7 @@ import logging
 import json
 from datetime import datetime,UTC
 
+
 class JSONFormatter(logging.Formatter):
     def format(self,record):
         log_record={
@@ -11,6 +12,9 @@ class JSONFormatter(logging.Formatter):
             "module": record.module,
             "funcName": record.funcName
         }
+        
+
+
         # Include any extra kwargs passed to the logger
         if hasattr(record, 'extra_data'):
             log_record.update(record.extra_data)

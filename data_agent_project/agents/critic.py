@@ -1,10 +1,11 @@
 from typing import List
 from google import genai
 from google.genai import types
-from agents.models import CriticVerdict
+from models.llm_schemas import CriticVerdict
 from core.logger import get_logger
 from core.memory import MemoryTurn,SessionState
 from prompts.formatter import PromptFormatter
+from core.telemetry import log_call,log_token_usage
 
 logger=get_logger(__name__)
 
@@ -14,9 +15,9 @@ class CriticAgent:
         self.client=client
         self.model=model
         
-    
+    @log_call
     def evaluate_logic(self,query:str,schema:str,code:str,output:str,session:SessionState) -> CriticVerdict:
-        logger.info("Invoking Critic Agent logic verification audit")
+        logger.info("Invoking Critic Agent logic verification audit",extra={"extra_data":{"session_id": session.session_id}})
 
         history_section=PromptFormatter.format_history(session)
         sandbox_section=PromptFormatter.format_sandbox(session)
@@ -56,6 +57,7 @@ class CriticAgent:
                 response_schema=CriticVerdict
             )
         )
-        logger.info("Critic review cycle concluded")
+        log_token_usage(response=response,agent_name="Critic")
+        logger.info("Critic review cycle concluded",extra={"extra_data": {"session_id": session.session_id}})
         return CriticVerdict.model_validate_json(response.text)
     

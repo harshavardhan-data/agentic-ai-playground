@@ -1,5 +1,6 @@
 from google import genai
 from prompts.formatter import PromptFormatter
+from core.telemetry import log_call,log_token_usage
 
 
 class SummarizerAgent():
@@ -9,7 +10,7 @@ class SummarizerAgent():
         self.model=model
 
         
-    
+    @log_call
     def summarize(self,user_query:str,code:str,output:str) -> str :
 
         summarizer_prompt=f"""You are an execution summarization assistant.Your job is to summarize a successful  execution
@@ -35,6 +36,7 @@ class SummarizerAgent():
             model=self.model,
             contents=summarizer_prompt,
         )
+        log_token_usage(response=response,agent_name="Summarizer")
 
         return response.text.strip()
         

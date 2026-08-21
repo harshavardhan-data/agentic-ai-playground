@@ -20,3 +20,9 @@ Thumbs.db
 
 # Local datasets (don't upload)
 *.csv
+
+# Databases
+*.db
+
+# Uploaded file storage
+storage/
