@@ -1,14 +1,12 @@
-# agents/tool_agent.py
 from core.logger import get_logger
 from google import genai
 from google.genai import types
-from typing import Optional, List, Any
-# from tools.registry import registry
-from prompts.formatter import PromptFormatter
+from typing import List
 from core.context import OrchestratorContext
 from core.memory import SessionState,BaseSessionStore
 from prompts.master_prompt import MasterPrompt
-from models.execution_results import ToolExecutionResult
+from models.execution_results import ToolExecutionResult,ToolStatus
+from models.tool_context import ToolContext
 
 
 logger = get_logger(__name__)
@@ -43,13 +41,31 @@ class MasterAgent:
             logger.info("Entered into the Main Loop")
 
             turns+=1
-
+            has_recoverable_error=False
+            recovery_nudge=None
             if turns>self.max_turns:
                 raise RuntimeError("MasterAgent exceeded planning limit.")
+            
 
-            tool_results=self._execute_tool_calls(response.function_calls,session,memory,context)
+            tool_results=self._execute_tool_calls(response.function_calls,session,memory,)
+            for result in tool_results:
+                if result.status == ToolStatus.FATAL_ERROR:
+                    raise RuntimeError(f"Fatal tool failure : {result.tool_name}  \nWith : {result.error_msg}")
 
-            response=self._send_tool_results(chat,tool_results,)
+                elif result.status == ToolStatus.RECOVERABLE_ERROR:
+                    has_recoverable_error=True
+                    logger.warning(f"Tool '{result.tool_name}' failed with recoverable error. Formatting output for LLM recovery.")
+
+                elif result.status == ToolStatus.SUCCESS:
+                    logger.info(f"Tool '{result.tool_name}' executed successfully.")
+
+                if has_recoverable_error:
+                    recovery_nudge = ("[SYSTEM DIRECTIVE]: One or more tool calls failed in the step above. "  
+                                    "Do NOT repeat the exact same tool call parameters. "
+                                    "Re-evaluate your reasoning before generating the next step.Only retry if appropriate"
+                                    )
+
+                response=self._send_tool_results(chat,tool_results,recovery_nudge)
             
             
         logger.info("Planning Completed")
@@ -65,14 +81,14 @@ class MasterAgent:
         config=types.GenerateContentConfig(tools=tools,temperature=0.2,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
 
-        return self.client.chats.create(
+        return self.client.chats.create( 
             model=self.model,
             config=config
         )
         
 
 
-    def _execute_tool_calls(self,function_calls,session:SessionState,memory:BaseSessionStore,context:OrchestratorContext) -> List[ToolExecutionResult]:
+    def _execute_tool_calls(self,function_calls,session:SessionState,memory:BaseSessionStore) -> List[ToolExecutionResult]:
 
         results=[]
 
@@ -92,12 +108,15 @@ class MasterAgent:
                 f"with args: {model_args}"
             )
 
-
+            tool_context = ToolContext(
+                session=session,
+                memory=memory,
+                client=self.client  # <--- Injected directly from the Master
+            )
             result=self.registry.execute_tool(
                 tool_name=tool_name,
                 arguments=model_args,
-                session_state=session,
-                memory=memory
+                tool_context=tool_context
             )
 
             results.append(result)
@@ -105,7 +124,7 @@ class MasterAgent:
         return results
 
 
-    def _send_tool_results(self,chat,results:list[ToolExecutionResult],):
+    def _send_tool_results(self,chat,results:list[ToolExecutionResult],recovery_nudge=None):
         parts=[]
 
         for result in results:
@@ -117,10 +136,11 @@ class MasterAgent:
                         "tool_name":result.tool_name,
                         "output":result.output,
                         "error":result.error_msg,
+                        "status":result.status,
                     },
                 )
             )
-
+        parts.append(recovery_nudge)
         return chat.send_message(parts)
     
 

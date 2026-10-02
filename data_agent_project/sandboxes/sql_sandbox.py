@@ -21,7 +21,8 @@ def _worker(query:str,db_path:str,auto_limited:bool,max_rows:int,result_queue:mp
     shares one across threads or processes."""
     start = time.perf_counter()
     try:
-        with sqlite3.connect(db_path, timeout=5) as conn:
+        uri_path = f"file:{db_path}?mode=ro"
+        with sqlite3.connect(uri_path,uri=True,timeout=5) as conn:
             df = pd.read_sql_query(query, conn)
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
         if len(df) > max_rows:
@@ -132,7 +133,7 @@ class SqlSandbox:
             return SqlExecutionResult.failure(f"Query timed out after {timeout} seconds. (Possible infinite loop.)",execution_time_ms=timeout*1000)
 
         if result_queue.empty():
-            return SqlExecutionResult.failure(error_message="Process exited without any result",execution_time_ms=timeout*1000)
+            return SqlExecutionResult.failure(error_message="Execution sub-process terminated without returning data.",execution_time_ms=timeout*1000)
 
         result:SqlExecutionResult = result_queue.get()
       

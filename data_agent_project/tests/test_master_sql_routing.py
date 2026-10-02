@@ -9,7 +9,7 @@ def test_master_sql():
 
     memory=SqliteSessionStore()
 
-    session_id='master-sql-test_5'
+    session_id='tool_spec_trial_2'
 
     session=memory.get_session(session_id)
 
@@ -48,6 +48,8 @@ def test_master_sql():
 
     print("\nFINAL ANSWER:")
     print(result)
+
+
 
 if __name__ == "__main__":
     test_master_sql()

@@ -18,7 +18,7 @@ class AvailableResource:
     description: str
 
 class ContextBuilder:
-
+ 
     @classmethod
     def build(cls,user_query:str,session:SessionState,registry) -> OrchestratorContext:
 

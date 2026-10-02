@@ -4,10 +4,11 @@ import re
 import pickle
 import traceback
 import contextlib
+import time
 import multiprocessing as mp
-from contextlib import redirect_stdout
 from typing import Any, Dict, Tuple
 import pandas as pd
+from models.execution_results import PythonExecutionResult
 
 class SecurityException(Exception):
     """Custom exception for AST security violations."""
@@ -19,6 +20,7 @@ def _worker(code: str, state_bytes: bytes, result_queue: mp.Queue) -> None:
     Runs INSIDE the child process. Completely separate memory space
     from your main app.
     """
+    start_time=time.perf_counter()
     state = pickle.loads(state_bytes)
     output_buffer = io.StringIO()
     try:
@@ -35,16 +37,18 @@ def _worker(code: str, state_bytes: bytes, result_queue: mp.Queue) -> None:
             try:
                 pickle.dumps(v)
                 clean_state[k] = v
-            except Exception:
+            except Exception as e:
                 continue
 
-        result_queue.put(("success", output_buffer.getvalue(), pickle.dumps(clean_state)))
+        execution_time_ms = (time.perf_counter() - start_time) * 1000
+        result_queue.put(("success", output_buffer.getvalue(), pickle.dumps(clean_state),execution_time_ms))
     except Exception:
-        result_queue.put(("error", traceback.format_exc(), None))
+        execution_time_ms = (time.perf_counter() - start_time) * 1000
+        result_queue.put(("error", traceback.format_exc(), None,execution_time_ms))
 
 class CodeSandbox:
-    BANNED_IMPORTS = {"os", "sys", "subprocess", "shutil", "requests", "socket"}
-    BANNED_FUNCTIONS = {"eval", "exec", "open", "compile"}
+    BANNED_IMPORTS = {"os", "sys", "subprocess", "shutil", "requests", "socket","pathlib"}
+    BANNED_FUNCTIONS = {"eval", "exec", "open", "compile","__import__"}
 
     @staticmethod
     def clean_code(raw_code: str) -> str:
@@ -97,17 +101,18 @@ class CodeSandbox:
         Runs the code in an isolated subprocess with a hard timeout.
         On success, global_vars is updated in place (same contract as before).
         """
+
         sanitized = cls.clean_code(code)
 
         try:
             cls.verify_safety(sanitized)
         except SecurityException as e:
-            return False, str(e)
+            return PythonExecutionResult.failure(error_message=f"Security Issue :{str(e)} ")
 
         try:
             state_bytes = pickle.dumps(global_vars)
         except Exception as e:
-            return False, f"Could not serialize session state before execution: {e}"
+            return PythonExecutionResult.failure(error_message=f"Possible Serialization Issue : {str(e)}")
 
         result_queue: mp.Queue = mp.Queue()
         proc = mp.Process(target=_worker, args=(sanitized, state_bytes, result_queue))
@@ -117,17 +122,19 @@ class CodeSandbox:
         if proc.is_alive():
             proc.terminate()
             proc.join()
-            return False, f"Execution timed out after {timeout} seconds (possible infinite loop)."
+            return PythonExecutionResult.failure(error_message=f"Execution timed out after {timeout} seconds (possible infinite loop).",
+                                                 execution_time_ms=timeout*1000,)
 
         if result_queue.empty():
-            return False, "Process exited without returning a result (it may have crashed unexpectedly)."
+            return PythonExecutionResult.failure(error_message="Process exited without returning a result (it may have crashed unexpectedly).",
+                                                 execution_time_ms=timeout*1000,)
 
-        status, payload, new_state_bytes = result_queue.get()
+        status, payload, new_state_bytes ,execution_time_ms = result_queue.get()
 
         if status == "error":
-            return False, payload  # traceback string
+            return PythonExecutionResult.failure(error_message=payload, execution_time_ms=execution_time_ms)
 
         # Success: merge the updated state back in, same as your old in-place mutation
         new_state = pickle.loads(new_state_bytes)
         global_vars.update(new_state)
-        return True, payload.strip()
+        return PythonExecutionResult.ok(result=payload.strip(), execution_time_ms=execution_time_ms)

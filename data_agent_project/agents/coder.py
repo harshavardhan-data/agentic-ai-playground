@@ -16,7 +16,7 @@ class CoderAgent:
         self.model=model
     
     @log_call   
-    def generate_code(self,current_task:str,session:SessionState,retry_context:str="") ->CodeResponse:
+    def generate_code(self,current_task:str,csv_schema:str,session:SessionState,retry_context:str="") ->CodeResponse:
         # Observability: Log context history depth
         logger.info("Compiling prompt with session conversation history",extra={"extra_data":{"history_depth":len(session.history),"session_id": session.session_id}})
 
@@ -35,6 +35,8 @@ class CoderAgent:
         - Always finish by printing the requested result
 
         {PromptFormatter.build_section("CURRENT TASK",current_task)}
+
+        {PromptFormatter.build_section("CSV Schema",csv_schema)}
         
         {PromptFormatter.build_section("ATTEMPTS SO FAR THIS TASK (all failed — do not repeat these mistakes)", retry_context)}
 
