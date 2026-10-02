@@ -9,6 +9,11 @@ from core.telemetry import log_call,log_token_usage
 
 logger=get_logger(__name__)
 
+
+
+def execute_generated_code(code_str:str):
+    eval(code_str)
+
 class CoderAgent:
 
     def __init__(self,client:genai.Client,model:str="gemini-3.1-flash-lite"):
