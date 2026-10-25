@@ -5,20 +5,23 @@ from io import StringIO
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel, Field
-from core.router import route_query
-from core.memory import InMemorySessionStore
 from core.sqlite_memory import SqliteSessionStore
+from agents.master_agent import MasterAgent
+from core.client import gemini_client
+from tools.registry import registry
+from core.context import ContextBuilder
 
 app = FastAPI(title="Data Analyst Agent API")
 
-# One shared store for the entire lifetime of the server process —
-# same idea as gemini_client being a singleton, just for session data instead.
 memory_store = SqliteSessionStore()
 
 # See explanation below — guards against two requests creating/reading
 # a session at the exact same instant.
 # _session_lock = threading.Lock()
 
+
+
+master_agent=MasterAgent(client=gemini_client,registry=registry)
 
 class DatabaseUploadRequest(BaseModel):
     db_path:str
@@ -81,11 +84,8 @@ def query(request: QueryRequest):
     print("STATE:", session.sandbox_state)
 
     try:
-        result=route_query(
-            session=session,
-            user_query=request.user_query,
-            memory=memory_store
-        )
+        context_build=ContextBuilder.build(user_query=request.user_query,session=session,registry=registry)
+        result=master_agent.run(session=session,memory=memory_store,context=context_build)
         if result is None:
             return QueryResponse(result=None,success=False)
 

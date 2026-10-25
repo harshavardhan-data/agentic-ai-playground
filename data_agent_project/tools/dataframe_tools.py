@@ -13,8 +13,8 @@ def inspect_dataframe(__context:ToolContext) -> ToolExecutionResult:
     df=__context.session.sandbox_state.get("df")
 
     if df is None:
-        raise ValueError("No DataFrame is Loaded in the current session")
-
+        # raise ValueError("No DataFrame is Loaded in the current session")
+        return ToolExecutionResult.failure(tool_name="inspect_dataframe",error_msg="No Dataframe Loaded",status=ToolStatus.CONFIGURATION_ERROR)
     # 1. Compute all stats across ALL columns simultaneously (Vectorized)
     columns_df = pd.DataFrame(
         {
@@ -44,7 +44,8 @@ def profile_dataset(__context:ToolContext) -> ToolExecutionResult :
     df=__context.session.sandbox_state.get("df")
 
     if df is None:
-        raise ValueError("No DataFrame is Loaded in the current session")
+        # raise ValueError("No DataFrame is Loaded in the current session")
+        return ToolExecutionResult.failure(tool_name="inspect_dataframe",error_msg="No Dataframe Loaded",status=ToolStatus.CONFIGURATION_ERROR)
 
     columns_df=pd.DataFrame(
         {
