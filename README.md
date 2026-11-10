@@ -2,6 +2,9 @@
 
 Python/FastAPI service that runs SQL/Python analysis, validates findings with an LLM, and tracks finding lifecycle.
 
+- **Branch:** `test/ai-reviewer-scope`
+- **Status:** core evidence/validation layer complete; master-agent routing and tool registry partially built and deferred
+
 ## Implemented
 - Deterministic profiling, anomaly detection, and data-quality checks
 - LLM validation workflow that re-checks claims by executing SQL/Python
