@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional,Literal   
 from sqlalchemy import (
     Boolean,
     Date,
@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    Integer
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -42,7 +43,8 @@ class DatasetRun(Base):
     storage_ref: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)  # ingested/profiled/analyzed/failed
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
+    row_count: Mapped[Optional[int]] = mapped_column(Integer,nullable=False)
+    col_count: Mapped[Optional[int]] = mapped_column(Integer,nullable=False)
     schema_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     stats_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     time_column: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -63,8 +65,9 @@ class Finding(Base):
     category: Mapped[str] = mapped_column(String, nullable=False)  # anomaly/trend/driver/quality
     claim: Mapped[str] = mapped_column(Text, nullable=False)
     metric: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    dimension: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    # direction: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # up/down/flat
+    dimension: Mapped[Optional[str]] = mapped_column(String, nullable=True)     
+    dimension_value: Mapped[Optional[str]] = mapped_column(String, nullable=True)   # <-- added
+    current_direction: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)  # new/ongoing/resolved/contradicted
     
@@ -74,7 +77,7 @@ class Finding(Base):
 
     run: Mapped["DatasetRun"] = relationship(back_populates="findings", foreign_keys=[run_id])
     source: Mapped["Source"] = relationship(back_populates="findings")
-    evidence: Mapped[List["Evidence"]] = relationship(back_populates="finding", cascade="all, delete-orphan")
+    evidence: Mapped[List["Evidence"]] = relationship(back_populates="finding", cascade="all, delete-orphan",order_by="Evidence.created_at")
     triggered_memories: Mapped[List["AgentMemory"]] = relationship(back_populates="trigger_finding")
 
 
@@ -83,11 +86,15 @@ class Evidence(Base):
 
     evidence_id: Mapped[str] = mapped_column(String, primary_key=True)
     finding_id: Mapped[str] = mapped_column(String, ForeignKey("findings.finding_id"), nullable=False)
-    origin: Mapped[str] = mapped_column(String, nullable=False)  # tool/investigation/user
-    type: Mapped[str] = mapped_column(String, nullable=False)  # sql/python/stat/comparison/counter
+    origin: Mapped[str] = mapped_column(String, nullable=False,default='tool')  # tool/investigation/user
+    type: Mapped[str] = mapped_column(String, nullable=False,default="stat")  # sql/python/stat/comparison/counter
     content_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     result_json: Mapped[dict] = mapped_column(JSON, nullable=False)
-    interpretation: Mapped[str] = mapped_column(Text, nullable=False)
+    claim: Mapped[Optional[str]] = mapped_column(Text, nullable=True)            # <-- added
+    direction: Mapped[Optional[str]] = mapped_column(String, nullable=True)      # <-- added
+    verdict: Mapped[Optional[str]] = mapped_column(String, nullable=True)        # <-- added (uncommented)
+    proof: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    interpretation: Mapped[str] = mapped_column(Text, nullable=False,default="")
     supports: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 

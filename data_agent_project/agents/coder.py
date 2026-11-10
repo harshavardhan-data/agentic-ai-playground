@@ -1,11 +1,13 @@
 from typing import List
 from google import genai
 from google.genai import types
-from models.llm_schemas import CodeResponse
+from models.llm_schemas import GeneratorResponse
 from core.logger import get_logger
 from core.memory import MemoryTurn,SessionState
-from prompts.formatter import PromptFormatter
+from prompts.formatter import format_findings
 from core.telemetry import log_call,log_token_usage
+from models.analysis_tools_schemas import RawCandidate
+from models.analysis import Finding,Evidence
 
 logger=get_logger(__name__)
 
@@ -22,59 +24,92 @@ def sanitize_user_input(text:str) -> str:
 def write_cache_file(file_path:str,content:str):
     open(file_path,"w").write(content)
 
-class CoderAgent:
+class GeneratorAgent:
 
     def __init__(self,client:genai.Client,model:str="gemini-3.1-flash-lite"):
         self.client=client
         self.model=model
     
-    @log_call   
-    def generate_code(self,current_task:str,csv_schema:str,session:SessionState,retry_context:str="") ->CodeResponse:
-        # Observability: Log context history depth
-        logger.info("Compiling prompt with session conversation history",extra={"extra_data":{"history_depth":len(session.history),"session_id": session.session_id}})
-
-        
-        history_section=PromptFormatter.format_history(session)
-        sandbox_section=PromptFormatter.format_sandbox(session)
-
-        current_prompt = f"""You are an expert Python data analysis agent. 
-        Important Execution Rules :
-        - The Python execution environment is persitent across this session
-        - Variables created during previous successful executions are still available to you
-        - Reuse existing variables whenever appropriate.
-        - Do not hardcode numerical outputs
-        - Only recompute values when necessary
-        - Assume a pandas DataFrame named 'df' is already loaded in the environment
-        - Always finish by printing the requested result
-
-        {PromptFormatter.build_section("CURRENT TASK",current_task)}
-
-        {PromptFormatter.build_section("CSV Schema",csv_schema)}
-        
-        {PromptFormatter.build_section("ATTEMPTS SO FAR THIS TASK (all failed — do not repeat these mistakes)", retry_context)}
-
-        {PromptFormatter.build_section("SESSION HISTORY",history_section)}
-
-        {PromptFormatter.build_section("CURRENT EXECUTION STATE",sandbox_section)}
+    # @log_call   
+    def generate_claims(self,findings:list[Finding],source_name:str,run_date) ->dict:
        
 
-        """
 
-        
+        finding_prompt=format_findings(findings)
 
-        logger.info("Invoking Coder Agent generation workflow")
-        response=self.client.models.generate_content(
-            model=self.model,
-            contents=current_prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=CodeResponse
+
+        current_prompt = f"""You are an expert data and business analysis person.You write compact one-sentence claims about the data findings 
+        presented to you with the evaluated metrics behind.
+
+        Important Execution Rules :
+        - State what changed, how much , and where
+        - Use numbers only from the context provided ,dont invent things
+        - No speculation about the causes
+        - No jargon
+        - One sentence ,max 25 words
+
+        BELOW ARE THE INDIVIDUAL FINDINGS WITH THEIR ATTRIBUTES ATTACHED :
+
+        {finding_prompt}
+
+        Output Format:
+        Return a JSON object matching the requested schema, mapping each finding_id to its sentence.
+                """
+
+        # print(current_prompt)
+
+        claims_dict={}
+        logger.info("Invoking Generator Agent,preparing claims")
+        try:
+            response=self.client.models.generate_content(
+                model=self.model,
+                contents=current_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=GeneratorResponse
+                )
             )
-        )
+            # Validate the response text into your Pydantic model
+            parsed_response = GeneratorResponse.model_validate_json(response.text)
+            
+            # Extract the inner dictionary
+            # claims_dict = parsed_response.generated_claims
+            # 3. CONVERT THE LIST BACK INTO A DICTIONARY RIGHT HERE
+            claims_dict = {item.finding_id: item.claim for item in parsed_response.claims}
+            
+            if not claims_dict:
+                raise ValueError("LLM returned empty claims response")
+        except Exception as e:
+            logger.warning(f"AI Generator failed ({str(e)}) ,Applying deterministic fallback claims")
+            
+
+        # Ensure every finding has a claim (handles both failures and missing IDs from the LLM)
+        for finding in findings:
+            if not claims_dict.get(finding.finding_id):
+                claims_dict[finding.finding_id] = _generate_fallback_claim(finding)
+
+        return claims_dict
         
-        log_token_usage(response=response,agent_name="Coder")
+        # log_token_usage(response=response,agent_name="Coder")
 
         # SDE Observability: Capture metadata without disrupting streaming flow
-        logger.info("Coder generation complete.", extra={"extra_data": {"model": self.model,"session_id": session.session_id}})
-        return CodeResponse.model_validate_json(response.text)
+       
+
+def _generate_fallback_claim(finding:Finding):
+    metric=finding.metric
+    dim=finding.dimension or "overall"
+    category=finding.category
+
+    latest_ev=finding.evidence[-1] if finding.evidence else None
+    result=latest_ev.result_json if latest_ev and latest_ev.result_json else {}
+    direction = result.get("direction", "changed")
+    magnitude = result.get("magnitude")
     
+    if category == "anomaly":
+        mag_str = f" by {abs(magnitude):.0%}" if isinstance(magnitude, (int, float)) else   ""
+        return f"Anomaly detected: {metric} for {dim} moved {direction}{mag_str}."
+    elif category == "quality":
+        return f"Data quality issue detected for {metric} in {dim}."
+    else:
+        return f"Noticeable shift detected in {metric} for {dim}."
+

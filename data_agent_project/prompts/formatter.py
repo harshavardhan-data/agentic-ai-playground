@@ -1,6 +1,7 @@
 from core.memory import SessionState
 import pandas as pd
 from models.db_context import DatabaseContext
+from models.analysis import Finding,Evidence
 
 
 class PromptFormatter:
@@ -115,3 +116,48 @@ class PromptFormatter:
         {temp_str}
         Maximum Rows Returned: {context.max_rows}"""
         
+
+
+
+def format_findings(findings: list[Finding]) -> str:
+    parts = []
+    for idx, f in enumerate(findings):
+        latest = f.evidence[-1] if f.evidence else None
+        result = latest.result_json if latest else {}
+        direction = (latest.direction if latest and latest.direction else
+                     result.get("direction", "changed"))
+        parts.append(
+            f"=== FINDING {idx} ===\n"
+            f"finding_id: {f.finding_id}\n"
+            f"category: {f.category}\n"
+            f"metric: {f.metric}\n"
+            f"dimension: {f.dimension}\n"
+            f"dimension_value: {f.dimension_value}\n"
+            f"direction: {direction}\n"
+            f"result_json: {result}\n"
+        )
+    return "\n".join(parts)
+
+
+def format_history(history: list[dict]) -> str:
+    if not history:
+        return "No prior evidence for this finding."
+    lines = []
+    for h in history:
+        lines.append(
+            f"- week {h['run_week']} | direction: {h['direction']} | claim: \"{h['claim']}\" "
+            f"| verdict: {h['verdict']} | result: {h['result_json']} "
+            f"| interpretation: {h['interpretation']}"
+        )
+    return "\n".join(lines)
+
+
+def format_profile(profile: dict) -> str:
+    return (
+        f"row_count: {profile.get('row_count')}\n"
+        f"time_column: {profile.get('time_column')}\n"
+        f"target: {profile.get('target')}\n"
+        f"dimension: {profile.get('dimension')}\n"
+        f"candidate_dims: {profile.get('candidate_dims')}\n"
+        f"nulls_summary: {profile.get('nulls_summary')}"
+    )

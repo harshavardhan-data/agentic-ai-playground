@@ -1,7 +1,7 @@
 from tools.registry import registry
 from typing import Any
-from sql_main import run_sql_healing_pipeline
-from main import run_self_healing_pipeline
+# from sql_main import run_sql_healing_pipeline
+# from main import run_self_healing_pipeline
 from models.tool_context import ToolContext
 from models.tool_input_schemas import AnalysisToolInput
 import pandas as pd
@@ -151,9 +151,9 @@ def detect_anomalies(
                 
                     pct = (row['mean'] - base_seg_mean) / abs(base_seg_mean)
                     if abs(pct) > SEGMENT_PCT_THRESHOLD:
-                        dim_label = f"{cat}({seg_value if seg_value else 'unknown'})"
+                        
                         candidates.append(_make_candidate(
-                            metric=col, dimension=dim_label,
+                            metric=col, dimension=cat,
                             dimension_value=str(seg_value),
                             magnitude=pct,
                             context={"base_seg_mean": float(base_seg_mean),
@@ -191,6 +191,7 @@ def _make_candidate(
         direction = "flat"
 
     context_with_direction={
+        "dimension_value":dimension_value,
         "direction":direction,
         "magnitude":magnitude,
         **context,

@@ -1,34 +1,24 @@
 BASE_CONFIDENCE = 0.5
+CONTRADICTED_THRESHOLD = 0.35
 
-SUPPORT_WEIGHTS = {
-    "sql": 0.15,
-    "stat": 0.15,
-    "python": 0.10,
-    "comparison": 0.10,
-}
-
-CONTRADICT_WEIGHTS = {
-    "counter": 0.30,
-    "sql": 0.30,
-    "stat": 0.25,
-}
-
-CONTRADICTED_THRESHOLD = 0.3
+CRITIC_WEIGHTS = {"supports": +0.20, "contradicted": -0.45, "uncertain": -0.05}
+TOOL_SUPPORT_WEIGHT = 0.05
+TOOL_CONTRADICT_WEIGHT = -0.20
 
 
 def calculate_confidence(evidence_list) -> tuple[float, str]:
     if not evidence_list:
-        return (0.3, "contradicted")
+        return (0.5, "active")
 
     score = BASE_CONFIDENCE
 
     for ev in evidence_list:
-        if ev.supports:
-            score += SUPPORT_WEIGHTS.get(ev.type, 0.0)
-        else:
-            score -= CONTRADICT_WEIGHTS.get(ev.type, 0.0)
+        if ev.origin == "critic":
+            score += CRITIC_WEIGHTS.get(ev.verdict, 0.0)
+        elif ev.origin == "tool":
+            score += TOOL_SUPPORT_WEIGHT if ev.supports else TOOL_CONTRADICT_WEIGHT
+        # other origins (investigation/user) inherit no weight for now
 
-    score = max(0.0, min(1.0, score))
+    score = round(max(0.0, min(1.0, score)), 2)
     status = "contradicted" if score < CONTRADICTED_THRESHOLD else "active"
-
     return (score, status)
